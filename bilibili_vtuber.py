@@ -67,6 +67,8 @@ def process_stream(stream_url):
                     video_buffer.append((frame.to_ndarray(format='rgb24'), frame.time))
                 elif packet.stream.type == 'audio':
                     audio_buffer.append((frame.to_ndarray(), frame.time))
+            if not running:
+                return
 
     def play_video():
         while running:
@@ -82,7 +84,8 @@ def process_stream(stream_url):
 
                 # 去除背景
                 image = remove(image, session=session)
-                start_event.set()
+                if not start_event.is_set():
+                    start_event.set()
 
                 image_surface = pygame.surfarray.make_surface(image[:,:,:3])
                 screen.blit(image_surface, (0, 0))
@@ -110,12 +113,9 @@ def process_stream(stream_url):
                 time.sleep(0.001)
 
 
-    # 等一段时间缓存
+    # 启动视频音频播放线程
     provider_thread = threading.Thread(target=provider, daemon=True)
     provider_thread.start()
-    time.sleep(2)
-
-    # 启动视频音频播放线程
     video_thread = threading.Thread(target=play_video, daemon=True)
     video_thread.start()
     audio_thread = threading.Thread(target=play_audio, daemon=True)
