@@ -1,0 +1,7 @@
+numpy
+streamlink
+pyaudio
+pygame
+av
+onnxruntime-gpu
+rembg[GPU]
