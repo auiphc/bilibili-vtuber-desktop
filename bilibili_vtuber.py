@@ -11,6 +11,10 @@ os.environ["XDG_DATA_HOME"] = "."
 
 from rembg import remove, new_session
 from collections import deque
+from configparser import ConfigParser
+
+config = ConfigParser()
+config.read('config.ini')
 
 
 def process_stream(stream_url):
@@ -60,15 +64,20 @@ def process_stream(stream_url):
             for frame in packet.decode():
                 # 将视频音频数据加入缓冲区
                 if packet.stream.type == 'video':
-                    video_buffer.append(frame.to_ndarray(format='rgb24'))
+                    video_buffer.append((frame.to_ndarray(format='rgb24'), frame.time))
                 elif packet.stream.type == 'audio':
-                    audio_buffer.append(frame.to_ndarray())
+                    audio_buffer.append((frame.to_ndarray(), frame.time))
 
     def play_video():
         while running:
             # 从缓冲区取出视频数据
             if video_buffer:
-                video_data = video_buffer.popleft()
+                video_data, frame_time = video_buffer.popleft()
+
+                # 以下一个音频为基准, 舍弃 0.5 秒之前的帧
+                if audio_buffer and audio_buffer[0][1] - frame_time > 0.5:
+                    continue
+
                 image = np.rot90(np.fliplr(video_data))
 
                 # 去除背景
@@ -85,7 +94,7 @@ def process_stream(stream_url):
         while running:
             # 从缓冲区取出音频数据
             if audio_buffer and start_event.is_set():
-                audio_data = audio_buffer.popleft()
+                audio_data, _ = audio_buffer.popleft()
                 if channels == 2:
                     # 将双声道数据转换为单声道数据
                     audio_data_left = audio_data[::2]
@@ -163,7 +172,8 @@ def process_stream(stream_url):
 
 
 def main():
-    room_id = 23222837 # b 站房间 id
+    # b 站直播间 id
+    room_id = config.get('Settings', 'bilibili_room_id')
     streams = streamlink.streams(f"https://live.bilibili.com/{room_id}")
 
     if not streams or not streams['best'].url:

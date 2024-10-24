@@ -6,4 +6,6 @@ one background removal tool for extracting bilibili vtuber to your desktop
 ## Install
 ```
 pip install -r requirements.txt
+
+cp config.ini.example config.ini
 ```
