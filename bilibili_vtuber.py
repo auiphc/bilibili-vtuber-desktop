@@ -12,19 +12,24 @@ os.environ["XDG_DATA_HOME"] = "."
 from rembg import remove, new_session
 from collections import deque
 from configparser import ConfigParser
+from DisCustomSession import DisCustomSession
 
 config = ConfigParser()
 config.read('config.ini')
 
 
-def process_stream(stream_url):
+def process_stream(stream_url: str, model: str, model_path: str = None):
     running = True
     start_event = threading.Event()
 
     player = pyaudio.PyAudio()
 
     # 初始化去背景模型
-    session = new_session("isnet-anime", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    if model == "isnet-custom":
+        session = DisCustomSession(model, model_path=model_path,
+                                   providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    else:
+        session = new_session(model, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
     # 初始化缓冲区
     video_buffer = deque(maxlen=1024)
@@ -39,6 +44,7 @@ def process_stream(stream_url):
 
     # 初始化 Pygame 显示窗口
     pygame.init()
+    pygame.display.set_caption("Bilibili Vtuber")
     screen = pygame.display.set_mode((video_stream.width, video_stream.height), pygame.NOFRAME)
 
     hwnd = pygame.display.get_wm_info()['window']
@@ -180,8 +186,9 @@ def main():
         print("无法找到可用的流")
         return
 
-    process_stream(streams['best'].url)
-
+    model = config.get('Settings', 'rembg_model')
+    model_path = config.get('Settings', 'rembg_model_path', fallback=None)
+    process_stream(streams['best'].url, model, model_path)
 
 
 if __name__ == "__main__":
