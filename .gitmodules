@@ -1,0 +1,3 @@
+[submodule "anime-segmentation"]
+	path = anime-segmentation
+	url = https://github.com/SkyTNT/anime-segmentation.git
