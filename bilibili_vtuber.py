@@ -80,20 +80,30 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
         while running:
             # 从缓冲区取出视频数据
             if video_buffer:
-                video_data, frame_time = video_buffer.popleft()
+                image, frame_time = video_buffer.popleft()
 
                 # 以下一个音频为基准, 舍弃 0.5 秒之前的帧
                 if audio_buffer and audio_buffer[0][1] - frame_time > 0.5:
                     continue
-
-                image = np.rot90(np.fliplr(video_data))
 
                 # 去除背景
                 image = remove(image, session=session)
                 if not start_event.is_set():
                     start_event.set()
 
-                image_surface = pygame.surfarray.make_surface(image[:,:,:3])
+                # pygame 图片和 numpy 数组的读取顺序好像不一样, 这里先手动做处理
+                image = np.rot90(np.fliplr(image))
+
+                # 创建一个支持透明度的 Surface
+                image_surface = pygame.Surface((image.shape[0], image.shape[1]), pygame.SRCALPHA)
+                pygame.surfarray.blit_array(image_surface, image[:,:,:3])
+
+                # 设置 alpha 通道
+                alpha_surface = pygame.surfarray.pixels_alpha(image_surface)
+                alpha_surface[:,:] = image[:,:,3]
+                del alpha_surface
+
+                screen.fill((0, 0, 0))
                 screen.blit(image_surface, (0, 0))
                 pygame.display.flip()
             else:

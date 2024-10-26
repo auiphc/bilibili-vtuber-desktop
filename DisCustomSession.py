@@ -108,3 +108,25 @@ class DisCustomSession(BaseSession):
             str: The name of the pre-trained model.
         """
         return "isnet-custom"
+
+
+if __name__ == "__main__":
+    from configparser import ConfigParser
+    from argparse import ArgumentParser
+    from rembg import remove
+
+    config = ConfigParser()
+    config.read('config.ini')
+
+    parser = ArgumentParser()
+    parser.add_argument("image", type=str)
+    args = parser.parse_args()
+
+    model_path = config.get('Settings', 'rembg_model_path', fallback=None)
+
+    session = DisCustomSession("isnet-custom", model_path=model_path,
+                               providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+
+    image = Image.open(args.image)
+    image = remove(image, session=session)
+    image.show()
