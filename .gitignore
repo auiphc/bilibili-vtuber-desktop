@@ -2,3 +2,4 @@ __pycache__
 .u2net
 dataset
 config.ini
+*cookies.txt

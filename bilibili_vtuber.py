@@ -68,13 +68,15 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
         # 获取音视频流
         for packet in container.demux(video_stream, audio_stream):
             for frame in packet.decode():
+                if not running:
+                    return
+                while len(video_buffer) > 1000 or len(audio_buffer) > 1000: # 队列溢出
+                    time.sleep(0.01)
                 # 将视频音频数据加入缓冲区
                 if packet.stream.type == 'video':
                     video_buffer.append((frame.to_ndarray(format='rgb24'), frame.time))
                 elif packet.stream.type == 'audio':
                     audio_buffer.append((frame.to_ndarray(), frame.time))
-            if not running:
-                return
 
     def play_video():
         while running:
