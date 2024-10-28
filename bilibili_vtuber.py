@@ -18,11 +18,27 @@ config = ConfigParser()
 config.read('config.ini')
 
 
+def get_stream_info(stream_url: str):
+    # 打开视频流
+    container = av.open(stream_url)
+    video_stream = next((s for s in container.streams if s.type == 'video'), None)
+    audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+
+    video_width = video_stream.width
+    video_height = video_stream.height
+    channels = audio_stream.codec_context.channels
+    sample_rate = audio_stream.codec_context.sample_rate
+    
+    container.close()
+    return video_width, video_height, channels, sample_rate
+
+
 def process_stream(stream_url: str, model: str, model_path: str = None):
     running = True
     start_event = threading.Event()
 
-    player = pyaudio.PyAudio()
+    # 获取直播流参数
+    video_width, video_height, channels, sample_rate = get_stream_info(stream_url)
 
     # 初始化去背景模型
     if model == "isnet-custom":
@@ -31,52 +47,45 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     else:
         session = new_session(model, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
-    # 初始化缓冲区
-    video_buffer = deque(maxlen=1024)
-    audio_buffer = deque(maxlen=1024)
-
-    # 打开视频流
-    container = av.open(stream_url)
-
-    video_stream = next((s for s in container.streams if s.type == 'video'), None)
-    audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
-
+    # 设置 PyAudio 输出流
+    player = pyaudio.PyAudio()
+    streamer = player.open(format=pyaudio.paFloat32, channels=1, rate=sample_rate, output=True)
 
     # 初始化 Pygame 显示窗口
     pygame.init()
     pygame.display.set_caption("Bilibili Vtuber")
-    screen = pygame.display.set_mode((video_stream.width, video_stream.height), pygame.NOFRAME)
+    screen = pygame.display.set_mode((video_width, video_height), pygame.NOFRAME)
 
+    # 设置窗口置顶透明
     hwnd = pygame.display.get_wm_info()['window']
-    # 设置置顶
     ctypes.windll.user32.SetWindowPos(hwnd, ctypes.wintypes.HWND(-1), 0, 0, 0, 0, 0x0001)
-
-    # 设置窗口透明
     ctypes.windll.user32.SetWindowLongW(hwnd, -20, ctypes.windll.user32.GetWindowLongW(hwnd, -20) | 0x00080000)
     ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000001)
 
 
-    # 设置 PyAudio 输出流
-    audio_format = pyaudio.paFloat32
-    channels = audio_stream.codec_context.channels
-    sample_rate = audio_stream.codec_context.sample_rate
-
-    streamer = player.open(format=audio_format, channels=1, rate=sample_rate, output=True)
-
+    # 初始化缓冲区
+    video_buffer = deque(maxlen=1024)
+    audio_buffer = deque(maxlen=1024)
 
     def provider():
-        # 获取音视频流
-        for packet in container.demux(video_stream, audio_stream):
-            for frame in packet.decode():
-                if not running:
-                    return
-                while len(video_buffer) > 1000 or len(audio_buffer) > 1000: # 队列溢出
-                    time.sleep(0.01)
-                # 将视频音频数据加入缓冲区
-                if packet.stream.type == 'video':
-                    video_buffer.append((frame.to_ndarray(format='rgb24'), frame.time))
-                elif packet.stream.type == 'audio':
-                    audio_buffer.append((frame.to_ndarray(), frame.time))
+        # 网络连接中断或信号丢失可能导致 demux 无法获取新的包, 从而导致循环结束, 所以这里加一个循环
+        while running:
+            # 获取音视频流
+            container = av.open(stream_url)
+            video_stream = next((s for s in container.streams if s.type == 'video'), None)
+            audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+
+            for packet in container.demux(video_stream, audio_stream):
+                for frame in packet.decode():
+                    if not running:
+                        return
+                    while len(video_buffer) > 1000 or len(audio_buffer) > 1000: # 队列溢出
+                        time.sleep(0.01)
+                    # 将视频音频数据加入缓冲区
+                    if packet.stream.type == 'video':
+                        video_buffer.append((frame.to_ndarray(format='rgb24'), frame.time))
+                    elif packet.stream.type == 'audio':
+                        audio_buffer.append((frame.to_ndarray(), frame.time))
 
     def play_video():
         while running:
@@ -158,7 +167,11 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
             # 处理窗口拖动
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 鼠标左键按下
-                    mouse_offset_x, mouse_offset_y = event.pos  # 记录初始偏移
+                    # 记录鼠标初始偏移
+                    cursor = ctypes.wintypes.POINT()
+                    ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
+                    mouse_offset_x, mouse_offset_y = cursor.x, cursor.y
+                    # 记录窗口初始位置
                     rect = ctypes.wintypes.RECT()
                     ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
                     window_x, window_y = rect.left, rect.top
@@ -170,16 +183,17 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
 
             elif event.type == pygame.MOUSEMOTION:
                 if dragging:
-                    mouse_x, mouse_y = event.pos
+                    # 获取鼠标位置
+                    cursor = ctypes.wintypes.POINT()
+                    ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
                     # 计算新的窗口位置
-                    new_x = window_x + mouse_x - mouse_offset_x
-                    new_y = window_y + mouse_y - mouse_offset_y
+                    new_x = window_x + cursor.x - mouse_offset_x
+                    new_y = window_y + cursor.y - mouse_offset_y
                     ctypes.windll.user32.SetWindowPos(hwnd, None, new_x, new_y, 0, 0, 0x0001)
 
         # 控制帧率
         clock.tick(60)
 
-    
     streamer.stop_stream()
     streamer.close()
     player.terminate()
