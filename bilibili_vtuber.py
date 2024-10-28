@@ -34,8 +34,9 @@ def get_stream_info(stream_url: str):
 
 
 def process_stream(stream_url: str, model: str, model_path: str = None):
+    # Global flags
     running = True
-    start_event = threading.Event()
+    start_audio = False
 
     # 获取直播流参数
     video_width, video_height, channels, sample_rate = get_stream_info(stream_url)
@@ -68,18 +69,24 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     audio_buffer = deque(maxlen=1024)
 
     def provider():
+        nonlocal running
+
         # 网络连接中断或信号丢失可能导致 demux 无法获取新的包, 从而导致循环结束, 所以这里加一个循环
         while running:
             # 获取音视频流
-            container = av.open(stream_url)
-            video_stream = next((s for s in container.streams if s.type == 'video'), None)
-            audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+            try:
+                container = av.open(stream_url)
+                video_stream = next((s for s in container.streams if s.type == 'video'), None)
+                audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+            except Exception as e:
+                print("直播结束了")
+                running = False
+                return
 
             for packet in container.demux(video_stream, audio_stream):
                 for frame in packet.decode():
-                    if not running:
-                        return
-                    while len(video_buffer) > 1000 or len(audio_buffer) > 1000: # 队列溢出
+                    # 队列溢出
+                    while len(video_buffer) > 1000 or len(audio_buffer) > 1000:
                         time.sleep(0.01)
                     # 将视频音频数据加入缓冲区
                     if packet.stream.type == 'video':
@@ -88,6 +95,8 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                         audio_buffer.append((frame.to_ndarray(), frame.time))
 
     def play_video():
+        nonlocal start_audio
+
         while running:
             # 从缓冲区取出视频数据
             if video_buffer:
@@ -99,8 +108,8 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
 
                 # 去除背景
                 image = remove(image, session=session)
-                if not start_event.is_set():
-                    start_event.set()
+                if not start_audio:
+                    start_audio = True
 
                 # pygame 图片和 numpy 数组的读取顺序好像不一样, 这里先手动做处理
                 image = np.rot90(np.fliplr(image))
@@ -123,7 +132,7 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     def play_audio():
         while running:
             # 从缓冲区取出音频数据
-            if audio_buffer and start_event.is_set():
+            if audio_buffer and start_audio:
                 audio_data, _ = audio_buffer.popleft()
                 if channels == 2:
                     # 将双声道数据转换为单声道数据
