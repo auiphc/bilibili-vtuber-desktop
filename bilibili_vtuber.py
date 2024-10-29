@@ -51,6 +51,8 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     # 设置 PyAudio 输出流
     player = pyaudio.PyAudio()
     streamer = player.open(format=pyaudio.paFloat32, channels=1, rate=sample_rate, output=True)
+    volume = 0.5
+    print("使用上下键调整音量")
 
     # 初始化 Pygame 显示窗口
     pygame.init()
@@ -85,6 +87,8 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
 
             for packet in container.demux(video_stream, audio_stream):
                 for frame in packet.decode():
+                    if not running:
+                        return
                     # 队列溢出
                     while len(video_buffer) > 1000 or len(audio_buffer) > 1000:
                         time.sleep(0.01)
@@ -140,10 +144,11 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                     audio_data_right = audio_data[1::2]
                     audio_data_mono = (audio_data_left + audio_data_right) / 2
  
-                    audio_data_mono_bytes = audio_data_mono.astype(np.float32).tobytes()
-                    streamer.write(audio_data_mono_bytes)
+                    audio_data_mono = audio_data_mono.astype(np.float32) * volume
+                    streamer.write(audio_data_mono.tobytes())
                 else:
                     # 单声道数据直接写入流
+                    audio_data *= volume
                     streamer.write(audio_data.tobytes())
             else:
                 time.sleep(0.001)
@@ -199,6 +204,12 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                     new_x = window_x + cursor.x - mouse_offset_x
                     new_y = window_y + cursor.y - mouse_offset_y
                     ctypes.windll.user32.SetWindowPos(hwnd, None, new_x, new_y, 0, 0, 0x0001)
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP: # 调整音量
+                    volume = min(volume + 0.1, 1.0)
+                elif event.key == pygame.K_DOWN:
+                    volume = max(volume - 0.1, 0.0)
 
         # 控制帧率
         clock.tick(60)
