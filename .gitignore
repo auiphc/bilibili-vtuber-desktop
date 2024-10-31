@@ -1,5 +1,7 @@
 __pycache__
+.vscode
 .u2net
 dataset
+build
 config.ini
 *cookies.txt
