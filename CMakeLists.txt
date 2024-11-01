@@ -16,5 +16,5 @@ include_directories(${ONNXRUNTIME_LIB_PATH}/include)
 link_directories(${ONNXRUNTIME_LIB_PATH}/lib)
 
 # onnxModel
-add_library(onnxModel SHARED onnxModel.cpp)
+add_library(onnxModel SHARED src/onnxModel.cpp)
 target_link_libraries(onnxModel PRIVATE cuda cudart onnxruntime ${OpenCV_LIBS})
