@@ -3,5 +3,6 @@ __pycache__
 .u2net
 dataset
 build
+dist
 config.ini
 *cookies.txt
