@@ -1,7 +1,7 @@
 import os
 from typing import List
 
-import numpy as np
+import cv2
 import onnxruntime as ort
 from PIL import Image
 from PIL.Image import Image as PILImage
@@ -66,13 +66,10 @@ class DisCustomSession(BaseSession):
 
         pred = ort_outs[0][:, 0, :, :]
 
-        ma = np.max(pred)
-        mi = np.min(pred)
+        pred = 255.0 - pred.reshape((1024, 1024)) * 255.0
+        _, pred = cv2.threshold(pred, 220, 255, cv2.THRESH_BINARY_INV)
 
-        pred = (pred - mi) / (ma - mi)
-        pred = np.squeeze(pred)
-
-        mask = Image.fromarray((pred * 255).astype("uint8"), mode="L")
+        mask = Image.fromarray(pred.astype("uint8"), mode="L")
         mask = mask.resize(img.size, Image.Resampling.LANCZOS)
 
         return [mask]
