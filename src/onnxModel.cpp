@@ -107,8 +107,16 @@ cv::Mat onnxModel::predict(cv::Mat& image, int batch_size, int index)
 
 extern "C" {
     OnnxModel* OnnxModel_new(const char* onnx_model_path) {
-        std::wstring wpath(onnx_model_path, onnx_model_path + strlen(onnx_model_path));
-        return new onnxModel(wpath.c_str());
+        try {
+            std::wstring wpath(onnx_model_path, onnx_model_path + strlen(onnx_model_path));
+            return new onnxModel(wpath.c_str());
+        } catch (const std::exception& e) {
+            std::cerr << "Exception in OnnxModel_new: " << e.what() << std::endl;
+            return nullptr;
+        } catch (...) {
+            std::cerr << "Unknown exception in OnnxModel_new" << std::endl;
+            return nullptr;
+        }
     }
 
     unsigned char* OnnxModel_predict(OnnxModel* model, const char* data, int size, int* out_size) {

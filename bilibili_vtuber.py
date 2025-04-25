@@ -7,8 +7,9 @@ import ctypes
 import time
 import av
 import os
+import tkinter as tk
 os.environ["XDG_DATA_HOME"] = "."
-
+from tkinter import simpledialog
 from rembg import remove, new_session
 from collections import deque
 from configparser import ConfigParser
@@ -17,6 +18,22 @@ from DisCustomSession import DisCustomSession
 config = ConfigParser()
 config.read('config.ini')
 
+def get_room_id_from_dialog():
+    # Create a root window (it won't be visible)
+    root = tk.Tk()
+    # Hide the root window
+    root.withdraw()
+    
+    # Show input dialog and get user input
+    room_id = simpledialog.askstring(
+        title="B站直播间ID",
+        prompt="请输入B站直播间ID:"
+    )
+    
+    # Destroy the root window
+    root.destroy()
+    
+    return room_id
 
 def get_stream_info(stream_url: str):
     # 打开视频流
@@ -225,7 +242,11 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
 
 def main():
     # b 站直播间 id
-    room_id = config.get('Settings', 'bilibili_room_id')
+    room_id = get_room_id_from_dialog()
+    if not room_id:
+        print("未输入直播间ID")
+        return
+
     streams = streamlink.streams(f"https://live.bilibili.com/{room_id}")
 
     if not streams or not streams['best'].url:

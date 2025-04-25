@@ -1,4 +1,0 @@
-[Settings]
-bilibili_room_id = 27206038
-rembg_model = isnet-anime
-rembg_model_path = .u2net/isnet-o2.onnx
