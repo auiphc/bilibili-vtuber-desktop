@@ -4,19 +4,21 @@ import threading
 import pyaudio
 import pygame
 import ctypes
+import ctypes.wintypes
 import time
 import av
 import os
+import io
 import tkinter as tk
-os.environ["XDG_DATA_HOME"] = "."
+
+from PIL import Image
 from tkinter import simpledialog
-from rembg import remove, new_session
 from collections import deque
 from configparser import ConfigParser
-from DisCustomSession import DisCustomSession
 
 config = ConfigParser()
 config.read('config.ini')
+
 
 def get_room_id_from_dialog():
     # Create a root window (it won't be visible)
@@ -50,7 +52,34 @@ def get_stream_info(stream_url: str):
     return video_width, video_height, channels, sample_rate
 
 
-def process_stream(stream_url: str, model: str, model_path: str = None):
+def loadModel(model_path: str, lib_path: str):
+    # 载入dll
+    lib_path = os.path.abspath(lib_path)
+    onnx_model_lib = ctypes.CDLL(lib_path)
+
+    # OnnxModel* OnnxModel_new(const char* onnx_model_path);
+    onnx_model_lib.OnnxModel_new.argtypes = [ctypes.c_char_p]
+    onnx_model_lib.OnnxModel_new.restype = ctypes.POINTER(ctypes.c_void_p)
+
+    # unsigned char* OnnxModel_predict(OnnxModel* model, const char* data, int size, int* out_size);
+    onnx_model_lib.OnnxModel_predict.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+    onnx_model_lib.OnnxModel_predict.restype = ctypes.POINTER(ctypes.c_ubyte)
+
+    # void OnnxModel_delete(OnnxModel* model);
+    onnx_model_lib.OnnxModel_delete.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    onnx_model_lib.OnnxModel_delete.restype = None
+
+    # void free_malloc(void *ptr);
+    onnx_model_lib.free_malloc.argtypes = [ctypes.c_void_p]
+    onnx_model_lib.free_malloc.restype = None
+
+    model_path = ctypes.c_char_p(model_path.encode('utf-8'))
+    model = onnx_model_lib.OnnxModel_new(model_path)
+
+    return model, onnx_model_lib
+
+
+def process_stream(stream_url: str, model_path: str, lib_path: str):
     # Global flags
     running = True
     start_audio = False
@@ -59,17 +88,18 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     video_width, video_height, channels, sample_rate = get_stream_info(stream_url)
 
     # 初始化去背景模型
-    if model == "isnet-custom":
-        session = DisCustomSession(model, model_path=model_path,
-                                   providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-    else:
-        session = new_session(model, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    model, onnx_model_lib = loadModel(model_path, lib_path)
+    if not model:
+        print("Failed to load model")
+        return
 
     # 设置 PyAudio 输出流
     player = pyaudio.PyAudio()
     streamer = player.open(format=pyaudio.paFloat32, channels=1, rate=sample_rate, output=True)
     volume = 0.5
     print("使用上下键调整音量")
+    print("使用鼠标滚轮调整窗口大小")
+    print("使用 0 键重置窗口大小")
 
     # 初始化 Pygame 显示窗口
     pygame.init()
@@ -82,6 +112,12 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     ctypes.windll.user32.SetWindowLongW(hwnd, -20, ctypes.windll.user32.GetWindowLongW(hwnd, -20) | 0x00080000)
     ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000001)
 
+    # 窗口大小调整相关变量
+    current_width = video_width
+    current_height = video_height
+    scale_factor = 1.0
+    min_scale = 0.2
+    max_scale = 2.0
 
     # 初始化缓冲区
     video_buffer = deque(maxlen=1024)
@@ -116,7 +152,7 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                         audio_buffer.append((frame.to_ndarray(), frame.time))
 
     def play_video():
-        nonlocal start_audio
+        nonlocal start_audio, current_width, current_height
 
         while running:
             # 从缓冲区取出视频数据
@@ -127,25 +163,41 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                 if audio_buffer and audio_buffer[0][1] - frame_time > 0.5:
                     continue
 
+                # encode png
+                image = Image.fromarray(image)
+                with io.BytesIO() as output:
+                    image.save(output, format="PNG")
+                    data = output.getvalue()
+
                 # 去除背景
-                image = remove(image, session=session)
+                out_size = ctypes.c_int()
+                result = onnx_model_lib.OnnxModel_predict(model, data, len(data), ctypes.byref(out_size))
+
+                # 开始音频
                 if not start_audio:
                     start_audio = True
 
+                # decode png
+                output = bytes(result[:out_size.value])
+                onnx_model_lib.free_malloc(result)
+                decoded_image = Image.open(io.BytesIO(output))
+
                 # pygame 图片和 numpy 数组的读取顺序好像不一样, 这里先手动做处理
-                image = np.rot90(np.fliplr(image))
+                image = np.rot90(np.fliplr(decoded_image))
 
-                # 创建一个支持透明度的 Surface
-                image_surface = pygame.Surface((image.shape[0], image.shape[1]), pygame.SRCALPHA)
-                pygame.surfarray.blit_array(image_surface, image[:,:,:3])
+                # 计算缩放比例，保持宽高比
+                img_h, img_w = image.shape[:2]
+                scale = min(current_width / img_w, current_height / img_h)
+                scaled_width = int(img_w * scale)
+                scaled_height = int(img_h * scale)
 
-                # 设置 alpha 通道
-                alpha_surface = pygame.surfarray.pixels_alpha(image_surface)
-                alpha_surface[:,:] = image[:,:,3]
-                del alpha_surface
+                # 缩放图像
+                image = np.array(Image.fromarray(image).resize((scaled_width, scaled_height), Image.Resampling.LANCZOS))
 
                 screen.fill((0, 0, 0))
-                screen.blit(image_surface, (0, 0))
+                image_surface = pygame.surfarray.make_surface(image)
+                img_rect = image_surface.get_rect(center=(current_width // 2, current_height // 2))
+                screen.blit(image_surface, img_rect)
                 pygame.display.flip()
             else:
                 time.sleep(0.001)
@@ -188,6 +240,36 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
     window_x, window_y = 0, 0
     mouse_offset_x, mouse_offset_y = 0, 0
 
+    # 添加窗口大小调整函数
+    def resize_window(new_width, new_height):
+        nonlocal current_width, current_height
+
+        # 获取当前窗口位置和中心点
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        center_x = (rect.left + rect.right) // 2
+        center_y = (rect.top + rect.bottom) // 2
+
+        # 计算新位置，保持中心点不变
+        new_left = center_x - new_width // 2
+        new_top = center_y - new_height // 2
+
+        # 调整窗口位置和大小
+        ctypes.windll.user32.SetWindowPos(hwnd, None, new_left, new_top, new_width, new_height, 0x0004)
+
+        # 重新设置 pygame 显示模式
+        global screen
+        screen = pygame.display.set_mode((new_width, new_height), pygame.NOFRAME)
+
+        # 重新应用置顶和透明属性
+        ctypes.windll.user32.SetWindowPos(hwnd, ctypes.wintypes.HWND(-1), 0, 0, 0, 0, 0x0001)
+        ctypes.windll.user32.SetWindowLongW(hwnd, -20, ctypes.windll.user32.GetWindowLongW(hwnd, -20) | 0x00080000)
+        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000001)
+
+        # 更新当前尺寸记录
+        current_width = new_width
+        current_height = new_height
+
     while running:
         # 检查是否退出
         for event in pygame.event.get():
@@ -227,10 +309,24 @@ def process_stream(stream_url: str, model: str, model_path: str = None):
                     volume = min(volume + 0.1, 1.0)
                 elif event.key == pygame.K_DOWN:
                     volume = max(volume - 0.1, 0.0)
+                elif event.key == pygame.K_0: # 重置窗口大小
+                    scale_factor = 1.0
+                    resize_window(video_width, video_height)
+            elif event.type == pygame.MOUSEWHEEL:
+                # 鼠标滚轮调整大小
+                if event.y > 0: # 向上滚动，放大
+                    scale_factor = min(scale_factor + 0.1, max_scale)
+                else: # 向下滚动，缩小
+                    scale_factor = max(scale_factor - 0.1, min_scale)
+                
+                new_width = int(video_width * scale_factor)
+                new_height = int(video_height * scale_factor)
+                resize_window(new_width, new_height)
 
         # 控制帧率
         clock.tick(60)
 
+    onnx_model_lib.OnnxModel_delete(model)
     streamer.stop_stream()
     streamer.close()
     player.terminate()
@@ -253,9 +349,9 @@ def main():
         print("无法找到可用的流")
         return
 
-    model = config.get('Settings', 'rembg_model')
-    model_path = config.get('Settings', 'rembg_model_path', fallback=None)
-    process_stream(streams['best'].url, model, model_path)
+    model_path = config.get('Settings', 'rembg_model_path')
+    lib_path = config.get('Settings', 'onnxModel_lib_path')
+    process_stream(streams['best'].url, model_path, lib_path)
 
 
 if __name__ == "__main__":

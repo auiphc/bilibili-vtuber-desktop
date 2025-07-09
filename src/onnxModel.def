@@ -1,0 +1,5 @@
+EXPORTS
+OnnxModel_new
+OnnxModel_predict
+OnnxModel_delete
+free_malloc 

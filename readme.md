@@ -5,18 +5,16 @@ one background removal tool for extracting bilibili vtuber to your desktop
 
 ![Example](./docs/example.gif)
 
+## Model
+Model can be downloaded [here](https://huggingface.co/skytnt/anime-seg)
+
 ## Install and Run
 ```
+build.bat
+
 pip install -r requirements.txt
 
 python bilibili_vtuber.py
-```
-
-## C lib
-```
-mkdir build && cd build
-cmake ..
-cmake --build . --config Release
 ```
 
 ## Finetune

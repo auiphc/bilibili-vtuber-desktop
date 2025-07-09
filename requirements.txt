@@ -3,6 +3,4 @@ streamlink
 pyaudio
 pygame
 av
-onnxruntime-gpu
-rembg[GPU]
-yt_dlp
+pillow
